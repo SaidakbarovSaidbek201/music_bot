@@ -2,7 +2,10 @@ from yt_dlp import YoutubeDL
 from pathlib import Path
 import logging
 from aiogram import Bot
-from config import CHANNELS_ID
+
+import os
+
+CHANNELS_ID = list(map(int, os.getenv("CHANNELS_ID", "").split(",")))
 
 def download_audio_from_video(url: str) -> str:
     output_path = "downloads/%(title)s.%(ext)s"
