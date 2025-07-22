@@ -1,48 +1,126 @@
 import os
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram import Bot, Dispatcher, F
+from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
-from media_downloader import download_audio_from_video, download_video
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from media_downloader import download_audio_from_video, download_video, check_all_channel_subscription
+from yt_dlp import YoutubeDL
+from config import BOT_TOKEN
+from keyboard import channels_keyboard
+import asyncio 
+from youtubeapi import search_youtube_videos
 
-TOKEN = "7537990926:AAGIc6kza09IKgrMW1jBqmvB5FVCMYdYoDc"
+
+TOKEN = BOT_TOKEN
 bot = Bot(TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-@dp.message(F.text.startswith("http"))
-async def handle_url(message: Message, state: FSMContext):
-    await state.update_data(url=message.text.strip())
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🎵 Music", callback_data="get_music"),
-            InlineKeyboardButton(text="🎬 Video", callback_data="get_video")
-        ]
-    ])
-    await message.answer("Nimani skachat qilmoqchisiz?", reply_markup=kb)
 
-@dp.callback_query(F.data == "get_music")
-async def handle_music(call: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    url = data.get("url")
-    await call.message.answer("🎧 Audio yuklab olinmoqda...")
-    try:
-        audio_file = download_audio_from_video(url)
-        await call.message.answer_audio(audio=types.FSInputFile(audio_file))
-        os.remove(audio_file)
-    except Exception as e:
-        await call.message.answer(f"⚠️ Xatolik: {e}")
+@dp.message(F.text == "/start")
+async def start(message: Message):
+    is_subscribed = await check_all_channel_subscription(bot, message.from_user.id)
 
-@dp.callback_query(F.data == "get_video")
-async def handle_video(call: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    url = data.get("url")
-    await call.message.answer("📥 Video yuklab olinmoqda...")
+    if not is_subscribed:
+        await message.answer(
+            "Assalomu alaykum! Siz kanalga obuna bo'lishingiz kerak. "
+            "Iltimos, quyidagi kanallarga obuna bo'ling va keyin qaytadan yozing.",
+            reply_markup=channels_keyboard
+        )
+    else:
+        builder = InlineKeyboardBuilder()
+        builder.button(text="🔍 Nomi bo‘yicha qidirish", callback_data="search_by_name")
+        builder.button(text="🔗 YouTube URL yuborish", callback_data="send_url")
+        builder.adjust(1)
+        await message.answer("👋 Salom! Qanday yo‘l bilan yuklab olmoqchisiz?", reply_markup=builder.as_markup())
+
+
+@dp.callback_query(F.data == "search_by_name")
+async def prompt_for_search(call: CallbackQuery):
+    await call.message.answer("🔍 Qaysi video yoki musiqani qidiryapsiz? Nomi yozing.")
+
+
+@dp.message(F.text)
+async def search_handler(message: Message, state: FSMContext):
+    query = message.text.strip()
+    if query.startswith("http"):
+        return
+
+    await message.answer(f"🔎 Qidirilmoqda: {query}")
+    ydl_opts = {
+        "quiet": True,
+        "skip_download": True,
+        "format": "bestaudio/best",
+    }
+
+    results = []
     try:
-        video_file = download_video(url)
-        await call.message.answer_video(video=types.FSInputFile(video_file))
-        os.remove(video_file)
+        with YoutubeDL(ydl_opts) as ydl:
+            search_results = ydl.extract_info(f"ytsearch10:{query}", download=False)["entries"]
+            for video in search_results:
+                results.append((video["title"], video["webpage_url"]))
     except Exception as e:
-        await call.message.answer(f"⚠️ Xatolik: {e}")
+        return await message.answer(f"⚠️ Qidirishda xatolik: {e}")
+
+    if not results:
+        return await message.answer("❌ Hech qanday natija topilmadi.")
+
+    builder = InlineKeyboardBuilder()
+    for i, (title, url) in enumerate(results, 1):
+        builder.button(text=f"{i}. {title[:50]}...", callback_data=f"choose_{url}")
+    builder.adjust(1)
+
+    await message.answer("🔽 Topilgan videolar:", reply_markup=builder.as_markup())
+
+
+@dp.callback_query(F.data.startswith("choose_"))
+async def choose_from_search(call: CallbackQuery, state: FSMContext):
+    url = call.data.replace("choose_", "")
+    await state.update_data(url=url)
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🎵 Musiqa", callback_data="get_music")
+    builder.button(text="🎬 Video", callback_data="get_video")
+    builder.adjust(2)
+
+    await call.message.answer("✅ Video topildi! Qanday formatda yuklab olasiz?", reply_markup=builder.as_markup())
+
+
+
+
+
+@dp.callback_query(F.data == "send_url")
+async def prompt_for_url(call: CallbackQuery):
+    await call.message.answer("📎 YouTube manzilini yuboring (https://...) va men uni yuklab beraman.")
+
+@dp.message(F.text)
+async def search_handler(message: Message, state: FSMContext):
+    query = message.text.strip()
+    if query.startswith("http"):
+        return
+
+    await message.answer(f"🔎 Qidirilmoqda: {query}")
+
+    try:
+        results = search_youtube_videos(query)
+    except Exception as e:
+        return await message.answer(f"⚠️ Qidirishda xatolik: {e}")
+
+    if not results:
+        return await message.answer("❌ Hech qanday natija topilmadi.")
+
+    builder = InlineKeyboardBuilder()
+    for i, (title, url) in enumerate(results, 1):
+        builder.button(text=f"{i}. {title[:50]}...", callback_data=f"choose_{url}")
+    builder.adjust(1)
+
+    await message.answer("🔽 Topilgan videolar:", reply_markup=builder.as_markup())
+
+
+
+
+
+
 
 if __name__ == "__main__":
     import asyncio
