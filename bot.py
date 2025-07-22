@@ -6,7 +6,9 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from media_downloader import download_audio_from_video, download_video, check_all_channel_subscription
 from yt_dlp import YoutubeDL
-from config import BOT_TOKEN
+import os
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 from keyboard import channels_keyboard
 import asyncio 
 from youtubeapi import search_youtube_videos
